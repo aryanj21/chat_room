@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Group Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <div class="container">
+        <h1>Welcome to Group Chat</h1>
+
+        <form action="/create-room" method="post">
+            <input type="text" name="name" placeholder="Enter your name" required>
+            <button type="submit">Create Room</button>
+        </form>
+
+        <hr>
+
+        <form action="/join-room" method="post">
+            <input type="text" name="name" placeholder="Enter your name" required>
+            <input type="text" name="room_code" placeholder="Enter Room Code" required>
+            <button type="submit">Join Room</button>
+        </form>
+    </div>
+
+</body>
+</html>

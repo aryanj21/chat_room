@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Room</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="chat-container">
+        <h2>Chat Room</h2>
+        {% if is_creator %}
+            <p>Room Code (Only you can see this): <strong>{{ room_code }}</strong></p>
+        {% else %}
+            <p>Room Code: <strong>Hidden</strong></p>
+        {% endif %}
+        <p>Welcome, <strong>{{ name }}</strong></p>
+
+        <div id="chat-box" style="height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;"></div>
+
+        <input type="text" id="message-input" placeholder="Type your message...">
+        <button id="send-btn">Send</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const chatBox = document.getElementById("chat-box");
+        const messageInput = document.getElementById("message-input");
+        const sendButton = document.getElementById("send-btn");
+
+        const roomCode = "{{ room_code }}";
+        const username = "{{ name }}";
+
+        socket.emit("join", { room_code: roomCode, name: username });
+
+        sendButton.addEventListener("click", sendMessage);
+        messageInput.addEventListener("keypress", (event) => {
+            if (event.key === "Enter") sendMessage();
+        });
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            socket.emit("send_message", { name: username, message: message, room_code: roomCode });
+            messageInput.value = "";
+        }
+
+        socket.on("message", (data) => {
+            const messageElement = document.createElement("div");
+
+            if (data.name === "System") {
+                messageElement.classList.add("system-message");
+                messageElement.innerText = data.msg;
+            } else {
+                messageElement.innerHTML = `<strong>${data.name}:</strong> ${data.msg}`;
+            }
+
+            chatBox.appendChild(messageElement);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        });
+
+        window.addEventListener("beforeunload", () => {
+            socket.emit("leave", { room_code: roomCode, name: username });
+        });
+    </script>
+</body>
+</html>
