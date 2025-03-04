@@ -3,13 +3,13 @@ import random
 import string
 import sqlite3
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, session, make_response, jsonify
+from flask import Flask, render_template, request, redirect, url_for, make_response, jsonify
 from flask_socketio import SocketIO, join_room, leave_room, send
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "default_secret_key")  # Use environment variable
-socketio = SocketIO(app, cors_allowed_origins="*")  # Allow cross-device connections
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "default_secret_key")
+socketio = SocketIO(app, cors_allowed_origins="*")  # Allow cross-device access
 
 # SQLite Database file
 DB_FILE = "chat.db"
@@ -18,13 +18,6 @@ DB_FILE = "chat.db"
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                room_code TEXT DEFAULT NULL
-            )
-        """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS rooms (
                 room_code TEXT PRIMARY KEY,
@@ -64,23 +57,16 @@ def create_room():
     if not name:
         return redirect(url_for("index"))
 
-    # Generate a unique user ID if not already set
-    user_id = request.cookies.get("user_id")
-    if not user_id:
-        user_id = "user_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-
-    # Generate a unique room code
     room_code = generate_room_code()
 
     with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
         cursor.execute("INSERT INTO rooms (room_code, creator) VALUES (?, ?)", (room_code, name))
-        cursor.execute("INSERT OR REPLACE INTO users (user_id, name, room_code) VALUES (?, ?, ?)", (user_id, name, room_code))
         conn.commit()
 
-    # Store user details in cookies for cross-device access
+    # Store user data in cookies (for cross-device access)
     response = make_response(redirect(url_for("chat", room_code=room_code)))
-    response.set_cookie("user_id", user_id, max_age=60*60*24*30)  # Store user_id in cookies
+    response.set_cookie("room_code", room_code, max_age=60*60*24*30)  # Store room code in cookies
     response.set_cookie("name", name, max_age=60*60*24*30)  # Store name in cookies
     return response
 
@@ -98,18 +84,9 @@ def join_room_route():
         if not cursor.fetchone():
             return redirect(url_for("index"))  # Room does not exist
 
-        # Retrieve or generate a user ID
-        user_id = request.cookies.get("user_id")
-        if not user_id:
-            user_id = "user_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-
-        # Store user details in the database
-        cursor.execute("INSERT OR REPLACE INTO users (user_id, name, room_code) VALUES (?, ?, ?)", (user_id, name, room_code))
-        conn.commit()
-
-    # Store user details in cookies for cross-device access
+    # Store user data in cookies (for cross-device access)
     response = make_response(redirect(url_for("chat", room_code=room_code)))
-    response.set_cookie("user_id", user_id, max_age=60*60*24*30)
+    response.set_cookie("room_code", room_code, max_age=60*60*24*30)
     response.set_cookie("name", name, max_age=60*60*24*30)
     return response
 
