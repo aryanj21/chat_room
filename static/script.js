@@ -1,6 +1,8 @@
 const socket = io();
-let roomCode = document.getElementById("room-code").innerText;
-let userName = document.getElementById("user-name").innerText;
+
+// 🔹 Ensure room code and username are correctly retrieved
+let roomCode = document.getElementById("room-code") ? document.getElementById("room-code").innerText : null;
+let userName = document.getElementById("user-name") ? document.getElementById("user-name").innerText : "Anonymous";
 
 // 🔹 Get user ID from cookies
 function getCookie(name) {
@@ -17,7 +19,9 @@ function getCookie(name) {
 let userId = getCookie("user_id");
 
 if (!userId) {
-    console.error("User ID not found in cookies! Rejoining may be required.");
+    console.error("User ID not found in cookies! Assigning temporary ID.");
+    userId = "temp_" + Math.random().toString(36).substr(2, 9); // Assign temporary ID
+    document.cookie = `user_id=${userId}; path=/`; // Save in cookies
 }
 
 // 🔹 Function to add messages to chat window
@@ -30,7 +34,10 @@ function addMessage(name, message, timestamp) {
         msgDiv.classList.add("own-message");
     }
 
-    msgDiv.innerHTML = `<strong>${name}:</strong> ${message} <span class="timestamp">${timestamp}</span>`;
+    // Format timestamp for better readability
+    let timeString = new Date(timestamp).toLocaleTimeString();
+
+    msgDiv.innerHTML = `<strong>${name}:</strong> ${message} <span class="timestamp">${timeString}</span>`;
     chatWindow.appendChild(msgDiv);
     chatWindow.scrollTop = chatWindow.scrollHeight; // Auto-scroll
 }
@@ -38,7 +45,7 @@ function addMessage(name, message, timestamp) {
 // 🔹 Join room
 socket.emit("join", { room_code: roomCode, name: userName, user_id: userId });
 
-// 🔹 Load previous messages
+// 🔹 Load previous messages from the server
 fetch(`/get-messages/${roomCode}`)
     .then(response => response.json())
     .then(data => {
@@ -51,18 +58,31 @@ socket.on("message", (data) => {
     addMessage(data.name, data.msg, data.timestamp);
 });
 
-// 🔹 Send message
-document.getElementById("send-btn").addEventListener("click", function () {
+// 🔹 Send message function
+function sendMessage() {
     const messageInput = document.getElementById("message-input");
     const message = messageInput.value.trim();
 
     if (message !== "") {
-        socket.emit("send_message", { room_code: roomCode, message: message, user_id: userId });
+        socket.emit("send_message", { room_code: roomCode, name: userName, message: message, user_id: userId });
         messageInput.value = ""; // Clear input box
+    }
+}
+
+// 🔹 Event listener for sending messages
+document.getElementById("send-btn").addEventListener("click", sendMessage);
+document.getElementById("message-input").addEventListener("keypress", function (event) {
+    if (event.key === "Enter") {
+        sendMessage();
     }
 });
 
 // 🔹 Leave room (disconnect handling)
+document.getElementById("leave-btn").addEventListener("click", function () {
+    socket.emit("leave", { room_code: roomCode, user_id: userId });
+    window.location.href = "/";
+});
+
 window.addEventListener("beforeunload", function () {
     socket.emit("leave", { room_code: roomCode, user_id: userId });
 });
