@@ -3,86 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Group Chat</title>
+    <title>Chat Room</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
+    <div class="chat-container">
+        <h2>Chat Room: <span id="room-code">{{ room_code }}</span></h2>
+        <p>Welcome, <strong id="user-name">{{ name }}</strong></p>
 
-    <div class="container">
-        <h1>Group Chat</h1>
-        <p><strong>Room Code:</strong> <span id="room-code">{{ room_code }}</span></p>
-        <p><strong>Welcome,</strong> <span id="user-name">{{ name }}</span></p>
+        <!-- Messages Display -->
+        <div id="messages" class="messages-container"></div>
 
-        <div id="chat-window" class="chat-window">
-            <!-- Messages will be added dynamically here -->
-        </div>
+        <!-- Message Input Form -->
+        <form id="message-form">
+            <input type="text" id="message-input" placeholder="Type your message..." required>
+            <button type="submit">Send</button>
+        </form>
 
-        <div class="message-box">
-            <input type="text" id="message-input" placeholder="Type your message...">
-            <button id="send-btn">Send</button>
-        </div>
-
-        <button id="leave-btn">Leave Room</button>
+        <!-- Leave Room Button -->
+        <button onclick="leaveRoom()" class="leave-button">Leave Room</button>
     </div>
 
     <script>
         const socket = io();
-        let roomCode = document.getElementById("room-code").innerText;
-        let userName = document.getElementById("user-name").innerText;
+        const name = localStorage.getItem("name") || "{{ name }}";
+        const room_code = localStorage.getItem("room_code") || "{{ room_code }}";
 
-        // 🔹 Function to add messages to chat window
-        function addMessage(name, message, timestamp) {
-            const chatWindow = document.getElementById("chat-window");
-            const msgDiv = document.createElement("div");
+        // Ensure name and room_code are stored for cross-device access
+        localStorage.setItem("name", name);
+        localStorage.setItem("room_code", room_code);
 
-            msgDiv.classList.add("message");
-            if (name === userName) {
-                msgDiv.classList.add("own-message");
+        // Auto-join room on page load
+        socket.emit("join", { name, room_code });
+
+        // Handle incoming messages
+        socket.on("message", function (data) {
+            const messagesContainer = document.getElementById("messages");
+            const messageElement = document.createElement("div");
+
+            if (data.name === "System") {
+                messageElement.classList.add("system-message");
+            } else {
+                messageElement.classList.add("user-message");
             }
 
-            msgDiv.innerHTML = `<strong>${name}:</strong> ${message} <span class="timestamp">${timestamp}</span>`;
-            chatWindow.appendChild(msgDiv);
-            chatWindow.scrollTop = chatWindow.scrollHeight; // Auto-scroll
-        }
-
-        // 🔹 Join room
-        socket.emit("join", { room_code: roomCode, name: userName });
-
-        // 🔹 Load previous messages
-        fetch(`/get-messages/${roomCode}`)
-            .then(response => response.json())
-            .then(data => {
-                data.messages.forEach(msg => addMessage(msg.name, msg.msg, msg.timestamp));
-            })
-            .catch(error => console.error("Error loading messages:", error));
-
-        // 🔹 Handle incoming messages
-        socket.on("message", (data) => {
-            addMessage(data.name, data.msg, data.timestamp);
+            messageElement.innerHTML = `<strong>${data.name}:</strong> ${data.msg} <span class="timestamp">${data.timestamp}</span>`;
+            messagesContainer.appendChild(messageElement);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         });
 
-        // 🔹 Send message
-        document.getElementById("send-btn").addEventListener("click", function () {
-            const messageInput = document.getElementById("message-input");
-            const message = messageInput.value.trim();
+        // Leave room function
+        function leaveRoom() {
+            socket.emit("leave", { name, room_code });
 
-            if (message !== "") {
-                socket.emit("send_message", { room_code: roomCode, name: userName, message: message });
-                messageInput.value = ""; // Clear input box
-            }
-        });
+            // Clear localStorage for a fresh session
+            localStorage.removeItem("name");
+            localStorage.removeItem("room_code");
 
-        // 🔹 Leave room (disconnect handling)
-        document.getElementById("leave-btn").addEventListener("click", function () {
-            socket.emit("leave", { room_code: roomCode, name: userName });
             window.location.href = "/";
-        });
-
-        window.addEventListener("beforeunload", function () {
-            socket.emit("leave", { room_code: roomCode, name: userName });
-        });
+        }
     </script>
-
 </body>
 </html>
