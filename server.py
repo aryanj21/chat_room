@@ -3,7 +3,7 @@ import random
 import string
 import sqlite3
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, make_response, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify
 from flask_socketio import SocketIO, join_room, leave_room, send
 
 # Initialize Flask app
@@ -31,6 +31,13 @@ def init_db():
                 name TEXT NOT NULL,
                 msg TEXT NOT NULL,
                 timestamp TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS participants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_code TEXT NOT NULL,
+                name TEXT NOT NULL
             )
         """)
         conn.commit()
@@ -62,13 +69,10 @@ def create_room():
     with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
         cursor.execute("INSERT INTO rooms (room_code, creator) VALUES (?, ?)", (room_code, name))
+        cursor.execute("INSERT INTO participants (room_code, name) VALUES (?, ?)", (room_code, name))
         conn.commit()
 
-    # Store user data in cookies (for cross-device access)
-    response = make_response(redirect(url_for("chat", room_code=room_code)))
-    response.set_cookie("room_code", room_code, max_age=60*60*24*30)  # Store room code in cookies
-    response.set_cookie("name", name, max_age=60*60*24*30)  # Store name in cookies
-    return response
+    return redirect(url_for("chat", room_code=room_code, name=name))
 
 @app.route("/join-room", methods=["POST"])
 def join_room_route():
@@ -83,19 +87,13 @@ def join_room_route():
         cursor.execute("SELECT room_code FROM rooms WHERE room_code = ?", (room_code,))
         if not cursor.fetchone():
             return redirect(url_for("index"))  # Room does not exist
+        cursor.execute("INSERT INTO participants (room_code, name) VALUES (?, ?)", (room_code, name))
+        conn.commit()
 
-    # Store user data in cookies (for cross-device access)
-    response = make_response(redirect(url_for("chat", room_code=room_code)))
-    response.set_cookie("room_code", room_code, max_age=60*60*24*30)
-    response.set_cookie("name", name, max_age=60*60*24*30)
-    return response
+    return redirect(url_for("chat", room_code=room_code, name=name))
 
 @app.route("/chat/<room_code>")
 def chat(room_code):
-    name = request.cookies.get("name")
-    if not name:
-        return redirect(url_for("index"))
-
     with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT creator FROM rooms WHERE room_code = ?", (room_code,))
@@ -104,8 +102,7 @@ def chat(room_code):
     if not room_data:
         return redirect(url_for("index"))
 
-    is_creator = (room_data[0] == name)
-    return render_template("chat.html", room_code=room_code, name=name, is_creator=is_creator)
+    return render_template("chat.html", room_code=room_code)
 
 @socketio.on("join")
 def handle_join(data):
