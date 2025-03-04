@@ -6,7 +6,7 @@ import sqlite3
 import random
 import string
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, session, make_response
+from flask import Flask, render_template, request, redirect, url_for, session, make_response, jsonify
 from flask_socketio import SocketIO, join_room, leave_room, send
 
 app = Flask(__name__)
@@ -16,9 +16,6 @@ socketio = SocketIO(app)
 # SQLite Database file
 DB_FILE = "chat.db"
 
-# JSON file to store room data (temporary storage)
-ROOMS_FILE = "rooms.json"
-
 # Initialize database
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
@@ -27,33 +24,37 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                room_code TEXT DEFAULT NULL  -- Allow NULL values
+                room_code TEXT DEFAULT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rooms (
+                room_code TEXT PRIMARY KEY,
+                creator TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                msg TEXT NOT NULL,
+                timestamp TEXT NOT NULL
             )
         """)
         conn.commit()
 
 init_db()  # Initialize database on startup
 
-# Load rooms from JSON file
-def load_rooms():
-    if os.path.exists(ROOMS_FILE):
-        with open(ROOMS_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-# Save rooms to JSON file
-def save_rooms(rooms):
-    with open(ROOMS_FILE, "w") as f:
-        json.dump(rooms, f, indent=4)
-
-rooms = load_rooms()
-
 # Generate unique room code
 def generate_room_code(length=6):
     while True:
         code = "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
-        if code not in rooms:
-            return code
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT room_code FROM rooms WHERE room_code = ?", (code,))
+            if not cursor.fetchone():
+                return code
 
 @app.route("/")
 def index():
@@ -72,19 +73,12 @@ def create_room():
 
     room_code = generate_room_code()
 
-    # Store user in SQLite with room_code
     with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
+        cursor.execute("INSERT INTO rooms (room_code, creator) VALUES (?, ?)", (room_code, name))
         cursor.execute("INSERT OR REPLACE INTO users (user_id, name, room_code) VALUES (?, ?, ?)", 
                        (user_id, name, room_code))
         conn.commit()
-
-    rooms[room_code] = {
-        "members": [name],
-        "messages": [],
-        "creator": name
-    }
-    save_rooms(rooms)
 
     session["name"] = name
     session["room_code"] = room_code
@@ -99,24 +93,23 @@ def join_room_route():
     name = request.form.get("name")
     room_code = request.form.get("room_code")
 
-    if not name or not room_code or room_code not in rooms:
+    if not name or not room_code:
         return redirect(url_for("index"))
 
-    user_id = session.get("user_id")
-    if not user_id:
-        user_id = "user_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        session["user_id"] = user_id  # Store in session
-
-    # Store user in SQLite with room_code
     with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT room_code FROM rooms WHERE room_code = ?", (room_code,))
+        if not cursor.fetchone():
+            return redirect(url_for("index"))  # Room does not exist
+
+        user_id = session.get("user_id")
+        if not user_id:
+            user_id = "user_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+            session["user_id"] = user_id  # Store in session
+
         cursor.execute("INSERT OR REPLACE INTO users (user_id, name, room_code) VALUES (?, ?, ?)", 
                        (user_id, name, room_code))
         conn.commit()
-
-    if name not in rooms[room_code]["members"]:
-        rooms[room_code]["members"].append(name)
-        save_rooms(rooms)
 
     session["name"] = name
     session["room_code"] = room_code
@@ -126,10 +119,18 @@ def join_room_route():
 @app.route("/chat/<room_code>")
 def chat(room_code):
     name = session.get("name")
-    if not name or room_code not in rooms or name not in rooms[room_code]["members"]:
+    if not name:
         return redirect(url_for("index"))
 
-    is_creator = (rooms[room_code]["creator"] == name)
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT creator FROM rooms WHERE room_code = ?", (room_code,))
+        room_data = cursor.fetchone()
+
+    if not room_data:
+        return redirect(url_for("index"))  # Room does not exist
+
+    is_creator = (room_data[0] == name)
     return render_template("chat.html", room_code=room_code, name=name, is_creator=is_creator)
 
 @socketio.on("join")
@@ -137,63 +138,64 @@ def handle_join(data):
     room_code = data["room_code"]
     name = data["name"]
 
-    if room_code in rooms:
-        join_room(room_code)
-        if name not in rooms[room_code]["members"]:
-            rooms[room_code]["members"].append(name)
-            save_rooms(rooms)
-
-        send({"name": "System", "msg": f"{name} joined the room"}, room=room_code)
+    join_room(room_code)
+    send({"name": "System", "msg": f"{name} joined the room"}, room=room_code)
 
 @socketio.on("send_message")
 def handle_message(data):
     room_code = data["room_code"]
     name = data["name"]
     message = data["message"]
-    timestamp = datetime.now().strftime("%H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if room_code in rooms:
-        msg_data = {"name": name, "msg": message, "timestamp": timestamp}
-        rooms[room_code]["messages"].append(msg_data)
-        save_rooms(rooms)
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO messages (room_code, name, msg, timestamp) VALUES (?, ?, ?, ?)", 
+                       (room_code, name, message, timestamp))
+        conn.commit()
 
-        send(msg_data, room=room_code)
+    send({"name": name, "msg": message, "timestamp": timestamp}, room=room_code)
 
 @socketio.on("leave")
 def handle_leave(data):
     room_code = data["room_code"]
     name = data["name"]
 
-    if room_code in rooms:
-        leave_room(room_code)
-        rooms[room_code]["members"].remove(name)
-        save_rooms(rooms)
+    leave_room(room_code)
+    send({"name": "System", "msg": f"{name} left the room"}, room=room_code)
 
-        send({"name": "System", "msg": f"{name} left the room"}, room=room_code)
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM users WHERE name = ? AND room_code = ?", (name, room_code))
+        cursor.execute("SELECT COUNT(*) FROM users WHERE room_code = ?", (room_code,))
+        count = cursor.fetchone()[0]
 
-        if not rooms[room_code]["members"]:
-            del rooms[room_code]
-            save_rooms(rooms)
+        if count == 0:
+            cursor.execute("DELETE FROM rooms WHERE room_code = ?", (room_code,))
+            cursor.execute("DELETE FROM messages WHERE room_code = ?", (room_code,))
+        conn.commit()
+
+@app.route("/get-messages/<room_code>")
+def get_messages(room_code):
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, msg, timestamp FROM messages WHERE room_code = ? ORDER BY id ASC", (room_code,))
+        messages = [{"name": row[0], "msg": row[1], "timestamp": row[2]} for row in cursor.fetchall()]
+    return jsonify({"messages": messages})
 
 # Delete inactive rooms after 30 minutes
 def cleanup_rooms():
     while True:
         time.sleep(600)  # Run every 10 minutes
-        now = time.time()
-        inactive_rooms = []
+        cutoff_time = datetime.now().timestamp() - 1800  # 30 minutes ago
 
-        for room_code, room in list(rooms.items()):
-            if room["messages"]:
-                last_message_time = room["messages"][-1].get("timestamp", None)
-                if last_message_time:
-                    last_message_timestamp = datetime.strptime(last_message_time, "%H:%M:%S").timestamp()
-                    if now - last_message_timestamp > 1800:  # 30 minutes
-                        inactive_rooms.append(room_code)
-
-        for room_code in inactive_rooms:
-            del rooms[room_code]
-
-        save_rooms(rooms)
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM rooms WHERE room_code IN (SELECT room_code FROM messages WHERE timestamp < ?)", 
+                           (cutoff_time,))
+            cursor.execute("DELETE FROM users WHERE room_code NOT IN (SELECT room_code FROM rooms)")
+            cursor.execute("DELETE FROM messages WHERE room_code NOT IN (SELECT room_code FROM rooms)")
+            conn.commit()
 
 # Start background cleanup thread
 cleanup_thread = threading.Thread(target=cleanup_rooms, daemon=True)
