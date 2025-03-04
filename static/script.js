@@ -1,88 +1,65 @@
 const socket = io();
 
-// 🔹 Ensure room code and username are correctly retrieved
-let roomCode = document.getElementById("room-code") ? document.getElementById("room-code").innerText : null;
-let userName = document.getElementById("user-name") ? document.getElementById("user-name").innerText : "Anonymous";
+// Retrieve user details from localStorage (for cross-device persistence)
+const name = localStorage.getItem("name");
+const room_code = localStorage.getItem("room_code");
 
-// 🔹 Get user ID from cookies
-function getCookie(name) {
-    let cookieArr = document.cookie.split(";");
-    for (let i = 0; i < cookieArr.length; i++) {
-        let cookiePair = cookieArr[i].split("=");
-        if (name === cookiePair[0].trim()) {
-            return decodeURIComponent(cookiePair[1]);
-        }
-    }
-    return null;
+// Automatically join room if data exists
+if (name && room_code) {
+    socket.emit("join", { name, room_code });
 }
 
-let userId = getCookie("user_id");
-
-if (!userId) {
-    console.error("User ID not found in cookies! Assigning temporary ID.");
-    userId = "temp_" + Math.random().toString(36).substr(2, 9); // Assign temporary ID
-    document.cookie = `user_id=${userId}; path=/`; // Save in cookies
-}
-
-// 🔹 Function to add messages to chat window
-function addMessage(name, message, timestamp) {
-    const chatWindow = document.getElementById("chat-window");
-    const msgDiv = document.createElement("div");
-
-    msgDiv.classList.add("message");
-    if (name === userName) {
-        msgDiv.classList.add("own-message");
-    }
-
-    // Format timestamp for better readability
-    let timeString = new Date(timestamp).toLocaleTimeString();
-
-    msgDiv.innerHTML = `<strong>${name}:</strong> ${message} <span class="timestamp">${timeString}</span>`;
-    chatWindow.appendChild(msgDiv);
-    chatWindow.scrollTop = chatWindow.scrollHeight; // Auto-scroll
-}
-
-// 🔹 Join room
-socket.emit("join", { room_code: roomCode, name: userName, user_id: userId });
-
-// 🔹 Load previous messages from the server
-fetch(`/get-messages/${roomCode}`)
-    .then(response => response.json())
-    .then(data => {
-        data.messages.forEach(msg => addMessage(msg.name, msg.msg, msg.timestamp));
-    })
-    .catch(error => console.error("Error loading messages:", error));
-
-// 🔹 Handle incoming messages
-socket.on("message", (data) => {
-    addMessage(data.name, data.msg, data.timestamp);
-});
-
-// 🔹 Send message function
-function sendMessage() {
+// Handle form submission for sending messages
+document.getElementById("message-form").addEventListener("submit", function (e) {
+    e.preventDefault();
     const messageInput = document.getElementById("message-input");
     const message = messageInput.value.trim();
 
     if (message !== "") {
-        socket.emit("send_message", { room_code: roomCode, name: userName, message: message, user_id: userId });
-        messageInput.value = ""; // Clear input box
+        socket.emit("send_message", { name, room_code, message });
+        messageInput.value = "";
     }
+});
+
+// Join the room when the user enters
+function joinRoom(userName, userRoom) {
+    if (!userName || !userRoom) {
+        alert("Name and Room Code are required!");
+        return;
+    }
+
+    // Store details in localStorage for cross-device access
+    localStorage.setItem("name", userName);
+    localStorage.setItem("room_code", userRoom);
+
+    socket.emit("join", { name: userName, room_code: userRoom });
 }
 
-// 🔹 Event listener for sending messages
-document.getElementById("send-btn").addEventListener("click", sendMessage);
-document.getElementById("message-input").addEventListener("keypress", function (event) {
-    if (event.key === "Enter") {
-        sendMessage();
+// Handle incoming messages
+socket.on("message", function (data) {
+    const messagesContainer = document.getElementById("messages");
+    const messageElement = document.createElement("div");
+
+    if (data.name === "System") {
+        messageElement.classList.add("system-message");
+    } else {
+        messageElement.classList.add("user-message");
     }
+
+    messageElement.innerHTML = `<strong>${data.name}:</strong> ${data.msg} <span class="timestamp">${data.timestamp}</span>`;
+    messagesContainer.appendChild(messageElement);
+
+    // Auto-scroll to latest message
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 });
 
-// 🔹 Leave room (disconnect handling)
-document.getElementById("leave-btn").addEventListener("click", function () {
-    socket.emit("leave", { room_code: roomCode, user_id: userId });
+// Handle user leaving the room
+function leaveRoom() {
+    socket.emit("leave", { name, room_code });
+
+    // Clear localStorage to reset session
+    localStorage.removeItem("name");
+    localStorage.removeItem("room_code");
+
     window.location.href = "/";
-});
-
-window.addEventListener("beforeunload", function () {
-    socket.emit("leave", { room_code: roomCode, user_id: userId });
-});
+}
