@@ -67,10 +67,10 @@ def create_room():
     if not name:
         return redirect(url_for("index"))
 
-    user_id = session.get("user_id")
+    # Generate a user_id and store it in a cookie
+    user_id = request.cookies.get("user_id")
     if not user_id:
         user_id = "user_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        session["user_id"] = user_id
 
     room_code = generate_room_code()
 
@@ -99,21 +99,29 @@ def join_room_route():
     with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT room_code FROM rooms WHERE room_code = ?", (room_code,))
-        if not cursor.fetchone():
-            return redirect(url_for("index"))
+        room_exists = cursor.fetchone()
 
-        user_id = session.get("user_id")
+        if not room_exists:
+            return redirect(url_for("index"))  # Room does not exist
+
+        # Retrieve or generate a user ID
+        user_id = request.cookies.get("user_id")
         if not user_id:
             user_id = "user_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-            session["user_id"] = user_id
 
-        cursor.execute("INSERT OR REPLACE INTO users (user_id, name, room_code) VALUES (?, ?, ?)", (user_id, name, room_code))
+        # Store user details in the database
+        cursor.execute("INSERT OR REPLACE INTO users (user_id, name, room_code) VALUES (?, ?, ?)", 
+                       (user_id, name, room_code))
         conn.commit()
 
+    # Store user session and set a cookie for cross-device access
     session["name"] = name
     session["room_code"] = room_code
     session.pop("is_creator", None)
-    return redirect(url_for("chat", room_code=room_code))
+
+    response = make_response(redirect(url_for("chat", room_code=room_code)))
+    response.set_cookie("user_id", user_id, max_age=60*60*24*30)  # Store user_id in cookies for 30 days
+    return response
 
 @app.route("/chat/<room_code>")
 def chat(room_code):
